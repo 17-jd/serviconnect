@@ -2,12 +2,17 @@ import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
 export async function middleware(request: NextRequest) {
-  // Only run Supabase auth middleware if env vars are configured
+  // Only run auth middleware if Supabase is configured
   if (
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   ) {
-    return await updateSession(request);
+    try {
+      return await updateSession(request);
+    } catch {
+      // If middleware fails, allow the request through
+      return NextResponse.next();
+    }
   }
 
   return NextResponse.next();
@@ -15,6 +20,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // Only run on login/signup for redirect-if-authenticated logic
+    "/login",
+    "/signup",
   ],
 };

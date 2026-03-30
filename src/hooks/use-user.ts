@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types/database";
 import type { User } from "@supabase/supabase-js";
@@ -18,34 +18,46 @@ export function useUser(): UseUserReturn {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const supabase = createClient();
-
-  const fetchProfile = useCallback(async (userId: string) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .single();
-    setProfile(data);
-  }, [supabase]);
+  // Memoize supabase client to prevent infinite re-renders
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
+    let mounted = true;
+
     const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      if (user) {
-        await fetchProfile(user.id);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!mounted) return;
+        setUser(user);
+        if (user) {
+          const { data } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", user.id)
+            .single();
+          if (mounted) setProfile(data);
+        }
+      } catch {
+        // Auth check failed — proceed without user
       }
-      setLoading(false);
+      if (mounted) setLoading(false);
     };
 
     getUser();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (!mounted) return;
         setUser(session?.user ?? null);
         if (session?.user) {
-          await fetchProfile(session.user.id);
+          try {
+            const { data } = await supabase
+              .from("profiles")
+              .select("*")
+              .eq("id", session.user.id)
+              .single();
+            if (mounted) setProfile(data);
+          } catch {}
         } else {
           setProfile(null);
         }
@@ -53,8 +65,11 @@ export function useUser(): UseUserReturn {
       }
     );
 
-    return () => subscription.unsubscribe();
-  }, [supabase, fetchProfile]);
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
@@ -63,8 +78,14 @@ export function useUser(): UseUserReturn {
   }, [supabase]);
 
   const refreshProfile = useCallback(async () => {
-    if (user) await fetchProfile(user.id);
-  }, [user, fetchProfile]);
+    if (!user) return;
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+    setProfile(data);
+  }, [user, supabase]);
 
   return { user, profile, loading, signOut, refreshProfile };
 }
