@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { useAuth } from "@/components/providers/auth-provider";
+import { createClient } from "@/lib/supabase/client";
 import {
   Droplets,
   Zap,
@@ -103,8 +105,50 @@ const itemVariants = {
 };
 
 export default function CustomerDashboard() {
+  const { profile } = useAuth();
   const { latitude, longitude, loading: locationLoading } = useGeolocation();
   const [searchQuery, setSearchQuery] = useState("");
+  const [providers, setProviders] = useState<NearbyProvider[]>(mockProviders);
+  const [categories, setCategories] = useState<{ id: string; name: string; slug: string; icon: string }[]>([]);
+
+  // Fetch real providers from API
+  useEffect(() => {
+    const fetchProviders = async () => {
+      try {
+        const params = new URLSearchParams();
+        if (latitude) params.set("lat", latitude.toString());
+        if (longitude) params.set("lng", longitude.toString());
+        const res = await fetch(`/api/providers/search?${params}`);
+        const data = await res.json();
+        if (data.providers && data.providers.length > 0) {
+          setProviders(data.providers);
+        }
+      } catch {
+        // Fall back to mock data
+      }
+    };
+    if (!locationLoading) fetchProviders();
+  }, [latitude, longitude, locationLoading]);
+
+  // Fetch real service categories
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase
+          .from("service_categories")
+          .select("id, name, slug, icon")
+          .eq("is_popular", true)
+          .order("sort_order");
+        if (data && data.length > 0) {
+          setCategories(data);
+        }
+      } catch {
+        // Fall back to hardcoded
+      }
+    };
+    fetchCategories();
+  }, []);
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
@@ -123,7 +167,7 @@ export default function CustomerDashboard() {
       {/* Greeting */}
       <motion.div variants={itemVariants}>
         <h1 className="text-3xl font-bold text-[var(--color-text-primary)] mb-2">
-          {getGreeting()} 👋
+          {getGreeting()}{profile ? `, ${profile.full_name.split(" ")[0]}` : ""} 👋
         </h1>
         <p className="text-[var(--color-text-secondary)]">
           What service do you need today?
@@ -204,7 +248,7 @@ export default function CustomerDashboard() {
         </div>
 
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {mockProviders.map((provider) => (
+          {providers.map((provider) => (
             <ProviderCard
               key={provider.provider_id}
               provider={provider}

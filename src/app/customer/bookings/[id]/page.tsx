@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useRealtimeBooking } from "@/hooks/use-realtime-booking";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,

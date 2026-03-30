@@ -19,10 +19,12 @@ import { GlassButton } from "@/components/ui/glass-button";
 import { GlassInput } from "@/components/ui/glass-input";
 import { GlassBadge } from "@/components/ui/glass-badge";
 import { useBookingStore } from "@/stores/booking-store";
+import { useAuth } from "@/components/providers/auth-provider";
+import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, cn } from "@/lib/utils";
-import { DURATION_OPTIONS } from "@/lib/constants";
+import { DURATION_OPTIONS, PLATFORM_FEE_PERCENT } from "@/lib/constants";
 
-const services = [
+const fallbackServices = [
   { id: "s1", name: "General Plumbing", rate: 7500 },
   { id: "s2", name: "Drain Cleaning", rate: 8500 },
   { id: "s3", name: "Water Heater", rate: 9500 },
@@ -45,19 +47,76 @@ export default function BookingPage() {
   const params = useParams();
   const router = useRouter();
   const store = useBookingStore();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [services, setServices] = useState(fallbackServices);
+  const [providerName, setProviderName] = useState("Provider");
 
   useEffect(() => {
-    store.setProvider(params.providerId as string, "Mike Johnson", 7500);
+    const fetchProvider = async () => {
+      const supabase = createClient();
+      const { data: provider } = await supabase
+        .from("provider_profiles")
+        .select("*, profiles(full_name), provider_services(*, service_categories(id, name))")
+        .eq("id", params.providerId)
+        .single();
+
+      if (provider) {
+        const name = (provider.profiles as { full_name: string })?.full_name || "Provider";
+        setProviderName(name);
+        store.setProvider(provider.id, name, provider.hourly_rate);
+
+        const svcList = (provider.provider_services as { service_categories: { id: string; name: string }; custom_rate: number | null }[]) || [];
+        if (svcList.length > 0) {
+          setServices(svcList.map((s) => ({
+            id: s.service_categories.id,
+            name: s.service_categories.name,
+            rate: s.custom_rate || provider.hourly_rate,
+          })));
+        }
+      } else {
+        store.setProvider(params.providerId as string, "Provider", 7500);
+      }
+    };
+    fetchProvider();
     return () => store.reset();
-  }, []);
+  }, [params.providerId]);
 
   const handleConfirm = async () => {
     setLoading(true);
-    // Simulate booking creation
-    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const supabase = createClient();
+      const subtotal = store.getSubtotal();
+      const platformFee = store.getPlatformFee();
+      const total = store.getTotal();
+
+      const { data: booking, error } = await supabase.from("bookings").insert({
+        customer_id: user?.id,
+        provider_id: store.providerId,
+        category_id: store.categoryId,
+        scheduled_date: store.scheduledDate,
+        scheduled_time: store.scheduledTime,
+        duration_hours: store.durationHours,
+        address_text: store.addressText,
+        hourly_rate: store.hourlyRate,
+        subtotal,
+        platform_fee: platformFee,
+        total,
+        payment_method: store.paymentMethod,
+        notes: store.notes,
+        status: "pending",
+      }).select().single();
+
+      if (error) {
+        console.error("Booking error:", error);
+        alert("Failed to create booking. Please try again.");
+      } else if (booking) {
+        router.push(`/customer/bookings/${booking.id}`);
+      }
+    } catch {
+      alert("An error occurred. Please try again.");
+    }
     setLoading(false);
-    router.push("/bookings");
   };
 
   const canProceed = () => {
